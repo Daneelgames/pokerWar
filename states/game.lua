@@ -55,11 +55,13 @@ function game:init()
     for i = 1, 5 do
         local playerCard = self.deck:draw()
         if playerCard then
+            playerCard.owner = "player"  -- Устанавливаем владельца
             self.player:addReinforcement(playerCard)
         end
 
         local enemyCard = self.deck:draw()
         if enemyCard then
+            enemyCard.owner = "enemy"  -- Устанавливаем владельца
             self.enemy:addReinforcement(enemyCard)
         end
     end
@@ -135,7 +137,6 @@ function game:getPlayerFrontRowSlots()
 end
 
 -- Размещение карты на поле боя
--- Размещение карты на поле боя
 function game:addCardToBattlefield(row, col, card)
     if not self.battlefield[row] then return end
 
@@ -152,8 +153,67 @@ function game:addCardToBattlefield(row, col, card)
         else
              -- It is already a list
              table.insert(self.battlefield[row][col], card)
+             
+             -- Limit to 5 cards per slot
+             if #self.battlefield[row][col] > 5 then
+                 table.remove(self.battlefield[row][col], 1)
+             end
         end
         print("Card added to squad at " .. row .. ", " .. col)
+    end
+end
+
+-- Перемещение всех стеков одной стороны на 1 слот вперед
+function game:moveSideStacks(side)
+    local rows = self.table.tableConfig.gridRows
+    local cols = self.table.tableConfig.gridCols
+    local direction = (side == "player") and -1 or 1
+    
+    print("Moving stacks for " .. side .. " in direction " .. direction)
+    
+    -- Для избежания повторного перемещения тех же стеков за один ход,
+    -- определяем порядок обхода:
+    -- Для игрока (вверх, к ряду 1): идем с 1 по 5 ряд
+    -- Для ИИ (вниз, к ряду 5): идем с 5 по 1 ряд
+    
+    local startRow, endRow, step
+    if side == "player" then
+        startRow, endRow, step = 1, rows, 1
+    else
+        startRow, endRow, step = rows, 1, -1
+    end
+    
+    for r = startRow, endRow, step do
+        for c = 1, cols do
+            local stack = self.battlefield[r][c]
+            if stack then
+                local stackSize = stack.suit and 1 or #stack
+                -- Проверяем принадлежность и размер (только полные стеки по 5 карт)
+                local firstCard = (stack.suit) and stack or stack[1]
+                
+                if stackSize == 5 and firstCard and firstCard.owner == side then
+                    local targetRow = r + direction
+                    
+                    -- Проверяем, не выходит ли за границы сетки
+                    if targetRow >= 1 and targetRow <= rows then
+                        local targetSlot = self.battlefield[targetRow][c]
+                        
+                        -- Если целевой слот пуст — перемещаем
+                        if targetSlot == nil then
+                            self.battlefield[targetRow][c] = stack
+                            self.battlefield[r][c] = nil
+                            print("Moved full stack from ("..r..", "..c..") to ("..targetRow..", "..c..")")
+                        else
+                            -- Слот занят — движение заблокировано (т.к. объединяться некуда, уже 5 карт)
+                            print("Full stack at ("..r..", "..c..") blocked at ("..targetRow..", "..c..")")
+                        end
+                    else
+                        -- Достигли края вражеской территории
+                        print("Full stack at ("..r..", "..c..") reached the frontline!")
+                    end
+                end
+            end
+        end
     end
 end
 
@@ -232,6 +292,7 @@ function game:mousereleased(x, y, button)
                 print("Card dropped in slot column " .. slot.col)
 
                 -- Add card to battlefield
+                self.draggedCard.owner = "player" -- Гарантируем владельца
                 self:addCardToBattlefield(playerRow, slot.col, self.draggedCard)
 
                 -- Remove card from player's hand
@@ -262,8 +323,12 @@ function game:playerEndsTurn()
     self.currentTurn = "enemy"
     print("\n=== AI Turn ===")
     
+    -- Перемещаем стеки противника вперед
+    self:moveSideStacks("enemy")
+    
     local playerCard = self.deck:draw()
     if playerCard then
+        playerCard.owner = "player" -- Устанавливаем владельца
         self.player:addReinforcement(playerCard)
         -- shake player cards in hand
         self.player:shakeCards()
@@ -273,6 +338,7 @@ function game:playerEndsTurn()
     
     if cardIndex and col then
         local card = self.enemy.reinforcements[cardIndex]
+        card.owner = "enemy" -- На всякий случай гарантируем владельца
         
         -- Добавляем карту на поле боя в верхний ряд (row 1)
         self:addCardToBattlefield(1, col, card)
@@ -283,6 +349,7 @@ function game:playerEndsTurn()
         print("AI placed card in row 1, column " .. col)
         local enemyCard = self.deck:draw()
         if enemyCard then
+            enemyCard.owner = "enemy" -- Устанавливаем владельца
             self.enemy:addReinforcement(enemyCard)
             -- shake enemy cars in hand
             self.enemy:shakeCards()
@@ -293,6 +360,9 @@ function game:playerEndsTurn()
     -- Возвращаем ход игроку
     self.currentTurn = "player"
     print("=== Player's Turn ===")
+    
+    -- Перемещаем стеки игрока вперед
+    self:moveSideStacks("player")
 end
 
 -- Обработка движения мыши
