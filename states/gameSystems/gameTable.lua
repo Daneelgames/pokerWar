@@ -47,12 +47,15 @@ function gameTable.new(canvasWidth, canvasHeight)
 
 
     -- Отрисовка скрытой карты (для противника)
-    local function drawHiddenCard(x, y)
+    local function drawHiddenCard(x, y, offsetX, offsetY)
+        local drawX = x + (offsetX or 0)
+        local drawY = y + (offsetY or 0)
+        
         love.graphics.setColor(0.3, 0.3, 0.3)  -- Серый фон для скрытых карт
-        love.graphics.rectangle("fill", x, y, TABLE_CONFIG.cardWidth, TABLE_CONFIG.cardHeight, 5, 5)
+        love.graphics.rectangle("fill", drawX, drawY, TABLE_CONFIG.cardWidth, TABLE_CONFIG.cardHeight, 5, 5)
 
         love.graphics.setColor(0, 0, 0)  -- Черная рамка
-        love.graphics.rectangle("line", x, y, TABLE_CONFIG.cardWidth, TABLE_CONFIG.cardHeight, 5, 5)
+        love.graphics.rectangle("line", drawX, drawY, TABLE_CONFIG.cardWidth, TABLE_CONFIG.cardHeight, 5, 5)
 
         -- Символ вопроса для скрытых карт
         love.graphics.setColor(1, 1, 1)
@@ -61,8 +64,8 @@ function gameTable.new(canvasWidth, canvasHeight)
         local text = "?"
         local textWidth = font:getWidth(text)
         local textHeight = font:getHeight()
-        local textX = x + (TABLE_CONFIG.cardWidth - textWidth) / 2
-        local textY = y + (TABLE_CONFIG.cardHeight - textHeight) / 2
+        local textX = drawX + (TABLE_CONFIG.cardWidth - textWidth) / 2
+        local textY = drawY + (TABLE_CONFIG.cardHeight - textHeight) / 2
         love.graphics.print(text, textX, textY)
     end
 
@@ -170,22 +173,29 @@ function gameTable.new(canvasWidth, canvasHeight)
         local enemyCards = self.enemy:getReinforcementsCount()
         local totalWidth = enemyCards * TABLE_CONFIG.cardWidth + (enemyCards - 1) * TABLE_CONFIG.cardSpacing
         local startX = (self.canvasWidth - totalWidth) / 2
+        
+        -- Получаем смещение тряски для врага
+        local enemyShakeX, enemyShakeY = self.enemy:getShakeOffset()
 
         for i = 1, enemyCards do
             local x = startX + (i - 1) * (TABLE_CONFIG.cardWidth + TABLE_CONFIG.cardSpacing)
-            drawHiddenCard(x, TABLE_CONFIG.enemyY)
+            drawHiddenCard(x, TABLE_CONFIG.enemyY, enemyShakeX, enemyShakeY)
         end
 
         -- Отрисовка подкреплений игрока (видимые карты), исключая перетаскиваемую
         local playerCards = self.player:getReinforcementsCount()
         totalWidth = playerCards * TABLE_CONFIG.cardWidth + (playerCards - 1) * TABLE_CONFIG.cardSpacing
         startX = (self.canvasWidth - totalWidth) / 2
+        
+        -- Получаем смещение тряски для игрока
+        local playerShakeX, playerShakeY = self.player:getShakeOffset()
 
         for i, card in ipairs(self.player.reinforcements) do
             if card then -- Check if card is not nil
                 if not draggedCardIndex or i ~= draggedCardIndex then
                     local x = startX + (i - 1) * (self.tableConfig.cardWidth + self.tableConfig.cardSpacing)
-                    card:draw(x, self.tableConfig.playerY, self.tableConfig, self.suitSprites)
+                    -- Применяем смещение тряски
+                    card:draw(x + playerShakeX, self.tableConfig.playerY + playerShakeY, self.tableConfig, self.suitSprites)
                 end
             else
                 -- This should not happen if table.remove works correctly, but for safety:

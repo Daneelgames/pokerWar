@@ -4,6 +4,7 @@ local game = {}
 local Deck = require 'states.gameSystems.deck'
 local Player = require 'states.gameSystems.player'
 local Table = require 'states.gameSystems.gameTable'
+local AIPlayer = require 'states.gameSystems.aiPlayer'
 
 -- Загрузка спрайтов мастей для перетаскивания карт
 local suitSprites = {
@@ -29,6 +30,9 @@ function game:init()
     self.draggedCardIndex = nil
     self.dragOffsetX = 0
     self.dragOffsetY = 0
+    
+    -- Управление ходами
+    self.currentTurn = "player"  -- "player" или "enemy"
 
     -- Поле боя - сетка 5x5 для размещения карт
     self.battlefield = {}
@@ -71,7 +75,9 @@ end
 
 --[[LOVE UPDATE]]
 function game:update(dt)
-    -- Обновление игры (пока пусто, для будущего расширения)
+    -- Обновление состояния игроков (анимации)
+    if self.player then self.player:update(dt) end
+    if self.enemy then self.enemy:update(dt) end
 end
 
 -- Обновление скейлинга при изменении размера окна
@@ -205,7 +211,7 @@ end
 
 -- Обработка отпускания мыши
 function game:mousereleased(x, y, button)
-    if button == 1 and self.draggedCard then  -- Левая кнопка мыши
+    if button == 1 and self.draggedCard and self.currentTurn == "player" then  -- Левая кнопка мыши и ход игрока
         local canvasX, canvasY = self:getMouseCanvasPosition()
 
         -- Проверяем, находится ли курсор над слотами нижнего ряда
@@ -214,16 +220,27 @@ function game:mousereleased(x, y, button)
 
         for _, slot in ipairs(frontRowSlots) do
             if self:pointInRect(canvasX, canvasY, slot.x, slot.y, slot.width, slot.height) then
+                -- Проверяем, не переполнен ли слот (макс. 5 карт)
+                local playerRow = self.table.tableConfig.gridRows
+                local currentStack = self.battlefield[playerRow][slot.col]
+                if currentStack and #currentStack >= 5 then
+                    print("Slot column " .. slot.col .. " is full (5 cards max)")
+                    break -- Выходим из цикла, droppedInSlot останется false, карта вернется в руку
+                end
+
                 -- Card successfully dropped in slot
                 print("Card dropped in slot column " .. slot.col)
 
                 -- Add card to battlefield
-                self:addCardToBattlefield(5, slot.col, self.draggedCard)
+                self:addCardToBattlefield(playerRow, slot.col, self.draggedCard)
 
                 -- Remove card from player's hand
                 table.remove(self.player.reinforcements, self.draggedCardIndex)
 
                 droppedInSlot = true
+
+                -- pass turn to opponent in func playerEndsTurn
+                self:playerEndsTurn()
                 break
             end
         end
@@ -238,6 +255,44 @@ function game:mousereleased(x, y, button)
         self.dragOffsetX = 0
         self.dragOffsetY = 0
     end
+end
+
+function game:playerEndsTurn()
+    -- Передаем ход противнику
+    self.currentTurn = "enemy"
+    print("\n=== AI Turn ===")
+    
+    local playerCard = self.deck:draw()
+    if playerCard then
+        self.player:addReinforcement(playerCard)
+        -- shake player cards in hand
+        self.player:shakeCards()
+    end
+    -- AI делает ход
+    local cardIndex, col = AIPlayer.makeMove(self.battlefield, self.enemy.reinforcements)
+    
+    if cardIndex and col then
+        local card = self.enemy.reinforcements[cardIndex]
+        
+        -- Добавляем карту на поле боя в верхний ряд (row 1)
+        self:addCardToBattlefield(1, col, card)
+        
+        -- Удаляем карту из руки AI
+        table.remove(self.enemy.reinforcements, cardIndex)
+        
+        print("AI placed card in row 1, column " .. col)
+        local enemyCard = self.deck:draw()
+        if enemyCard then
+            self.enemy:addReinforcement(enemyCard)
+            -- shake enemy cars in hand
+            self.enemy:shakeCards()
+        end
+    else
+        print("AI can't make a move")
+    end
+    -- Возвращаем ход игроку
+    self.currentTurn = "player"
+    print("=== Player's Turn ===")
 end
 
 -- Обработка движения мыши
