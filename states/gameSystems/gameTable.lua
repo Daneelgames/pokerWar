@@ -21,8 +21,8 @@ local TABLE_CONFIG = {
     enemyY = 20,    -- Позиция карт противника (верхняя часть)
 
     -- Настройки сетки поля боя
-    gridRows = 5,
-    gridCols = 5,
+    gridRows = CONFIG.game.gridRows,
+    gridCols = CONFIG.game.gridCols,
     gridSlotSize = 60,
     gridSpacing = 20,
     gridStartY = 100  -- Начало сетки по Y (между enemyY и playerY)
@@ -208,13 +208,13 @@ function gameTable.new(canvasWidth, canvasHeight)
         local font = Fonts.regular[14]
         love.graphics.setFont(font)
 
-        -- Текст для противника
-        local enemyText = "Enemy: " .. enemyCards .. " reinforcements"
-        love.graphics.print(enemyText, TABLE_CONFIG.tableMargin, TABLE_CONFIG.enemyY - 25)
+        -- -- Текст для противника
+        -- local enemyText = "Enemy: " .. enemyCards .. " reinforcements"
+        -- love.graphics.print(enemyText, TABLE_CONFIG.tableMargin, TABLE_CONFIG.enemyY - 25)
 
-        -- Текст для игрока
-        local playerText = "Player: " .. playerCards .. " reinforcements"
-        love.graphics.print(playerText, TABLE_CONFIG.tableMargin, TABLE_CONFIG.playerY + TABLE_CONFIG.cardHeight + 5)
+        -- -- Текст для игрока
+        -- local playerText = "Player: " .. playerCards .. " reinforcements"
+        -- love.graphics.print(playerText, TABLE_CONFIG.tableMargin, TABLE_CONFIG.playerY + TABLE_CONFIG.cardHeight + 5)
     end
 
     return self

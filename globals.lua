@@ -54,6 +54,12 @@ CONFIG = {
             shadowOffset    = {x = 1, y = 1},
             position        = {x = 70, y = 70},
         },
+    },
+
+    game = {
+        gridRows = 5,
+        gridCols = 3,
+        handSize = 3
     }
 }
 

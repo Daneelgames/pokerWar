@@ -12,6 +12,12 @@ local function evaluateSlotValue(battlefield, row, col, card, hand)
     
     -- Собираем текущие карты в слоте
     if slotContent then
+        -- Проверка на владельца: ИИ не может ставить карту в слот, занятый игроком
+        local firstCard = slotContent.suit and slotContent or slotContent[1]
+        if firstCard and firstCard.owner ~= "enemy" then
+            return -1 -- Невалидный ход
+        end
+
         if slotContent.suit then
             -- Одна карта (старый формат)
             table.insert(currentCards, slotContent)
@@ -80,10 +86,76 @@ function aiPlayer.calculatePotential(currentCards, hand, placedCard)
     return bonus
 end
 
+-- Вспомогательная функция для проверки, занят ли конец колонны ИИ-игроком
+local function isColumnBlockedByAI(battlefield, col)
+    local lastRow = CONFIG.game.gridRows
+    if battlefield[lastRow] and battlefield[lastRow][col] then
+        local slot = battlefield[lastRow][col]
+        local firstCard = slot.suit and slot or slot[1]
+        if firstCard and firstCard.owner == "enemy" then
+            return true
+        end
+    end
+    return false
+end
+
 -- Выбирает лучший слот для размещения карты
 function aiPlayer.chooseBestSlot(battlefield, hand)
     if not hand or #hand == 0 then
         return nil, nil
+    end
+    
+    local cols = CONFIG.game.gridCols
+    
+    -- 33% шанс сделать полностью случайный, но валидный ход
+    if love.math.random() < 0.33 then
+        local validMoves = {}
+        for cardIndex, card in ipairs(hand) do
+            for col = 1, cols do
+                -- Проверяем, что колонка не перекрыта в конце и ход валиден
+                if not isColumnBlockedByAI(battlefield, col) and evaluateSlotValue(battlefield, 1, col, card, hand) >= 0 then
+                    table.insert(validMoves, {cardIndex = cardIndex, col = col})
+                end
+            end
+        end
+        
+        if #validMoves > 0 then
+            local move = validMoves[love.math.random(#validMoves)]
+            print("AI logic: Random chaotic move chosen (33% chance)")
+            return move.cardIndex, move.col
+        end
+    end
+
+    -- Находим пустые слоты в первом ряду, исключая заблокированные колонны
+    local emptyCols = {}
+    for col = 1, cols do
+        if not isColumnBlockedByAI(battlefield, col) and battlefield[1][col] == nil then
+            table.insert(emptyCols, col)
+        end
+    end
+
+    -- 50% шанс предпочесть пустые слоты, если они есть
+    -- Это заставляет ИИ атаковать по разным направлениям
+    local useOnlyEmpty = #emptyCols > 0 and love.math.random() < 0.5
+    
+    local colsToSearch = {}
+    if useOnlyEmpty then
+        colsToSearch = emptyCols
+    else
+        for col = 1, cols do
+            -- Добавляем только те колонны, которые не заблокированы в конце
+            if not isColumnBlockedByAI(battlefield, col) then
+                table.insert(colsToSearch, col)
+            end
+        end
+    end
+    
+    -- Если после фильтрации не осталось колонок для поиска, пробуем найти хоть что-то валидное
+    -- (на случай, если все колонны "заблокированы", но играть надо)
+    if #colsToSearch == 0 then
+        for col = 1, cols do
+            table.insert(colsToSearch, col)
+        end
     end
     
     local bestScore = -1
@@ -92,8 +164,7 @@ function aiPlayer.chooseBestSlot(battlefield, hand)
     
     -- Перебираем все карты в руке
     for cardIndex, card in ipairs(hand) do
-        -- Перебираем все колонки в первом ряду (ближайший к AI)
-        for col = 1, 5 do
+        for _, col in ipairs(colsToSearch) do
             local score = evaluateSlotValue(battlefield, 1, col, card, hand)
             
             if score > bestScore then
@@ -104,6 +175,23 @@ function aiPlayer.chooseBestSlot(battlefield, hand)
         end
     end
     
+    -- Если мы пытались найти только в пустых, но ничего не нашли, 
+    -- ищем по всем доступным (не заблокированным) слотам
+    if bestScore == -1 and useOnlyEmpty then
+        for cardIndex, card in ipairs(hand) do
+            for col = 1, cols do
+                if not isColumnBlockedByAI(battlefield, col) then
+                    local score = evaluateSlotValue(battlefield, 1, col, card, hand)
+                    if score > bestScore then
+                        bestScore = score
+                        bestCardIndex = cardIndex
+                        bestCol = col
+                    end
+                end
+            end
+        end
+    end
+
     return bestCardIndex, bestCol
 end
 

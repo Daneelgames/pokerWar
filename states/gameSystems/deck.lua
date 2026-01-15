@@ -26,7 +26,15 @@ function deck.new()
         if #self.cards > 0 then
             return table.remove(self.cards)
         end
-        return nil
+
+        self.cards = {}
+        for _, suit in pairs(card.suits) do
+            for _, rank in ipairs(card.ranks) do
+                table.insert(self.cards, card.new(suit, rank))
+            end
+        end
+
+        return table.remove(self.cards)
     end
 
     -- Количество оставшихся карт

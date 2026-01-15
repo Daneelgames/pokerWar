@@ -5,6 +5,9 @@ local Deck = require 'states.gameSystems.deck'
 local Player = require 'states.gameSystems.player'
 local Table = require 'states.gameSystems.gameTable'
 local AIPlayer = require 'states.gameSystems.aiPlayer'
+local Combat = require 'states.gameSystems.combatCalculations'
+local Tooltip = require 'states.gameSystems.tooltip'
+local Combinations = require 'states.gameSystems.combinations'
 
 -- Загрузка спрайтов мастей для перетаскивания карт
 local suitSprites = {
@@ -34,11 +37,13 @@ function game:init()
     -- Управление ходами
     self.currentTurn = "player"  -- "player" или "enemy"
 
-    -- Поле боя - сетка 5x5 для размещения карт
+    -- Поле боя - сетка для размещения карт
     self.battlefield = {}
-    for row = 1, 5 do
+    local rows = CONFIG.game.gridRows
+    local cols = CONFIG.game.gridCols
+    for row = 1, rows do
         self.battlefield[row] = {}
-        for col = 1, 5 do
+        for col = 1, cols do
             self.battlefield[row][col] = nil  -- nil означает пустой слот
         end
     end
@@ -51,8 +56,8 @@ function game:init()
     self.player = Player.new("Игрок", true)
     self.enemy = Player.new("Компьютер", false)
 
-    -- Раздача 5 карт каждому игроку в качестве подкреплений
-    for i = 1, 5 do
+    -- Раздача CONFIG.game.handSize карт каждому игроку в качестве подкреплений
+    for i = 1, CONFIG.game.handSize do
         local playerCard = self.deck:draw()
         if playerCard then
             playerCard.owner = "player"  -- Устанавливаем владельца
@@ -70,6 +75,9 @@ function game:init()
     self.table = Table.new(self.canvasWidth, self.canvasHeight)
     self.table:setPlayers(self.player, self.enemy)
 
+    -- Инициализация тултипа
+    self.tooltip = Tooltip.new()
+
     print("Game initialized!")
     print("Player received " .. self.player:getReinforcementsCount() .. " reinforcements")
     print("Enemy received " .. self.enemy:getReinforcementsCount() .. " reinforcements")
@@ -80,6 +88,55 @@ function game:update(dt)
     -- Обновление состояния игроков (анимации)
     if self.player then self.player:update(dt) end
     if self.enemy then self.enemy:update(dt) end
+
+    -- Обновление тултипа (проверка наведения на слоты поля боя)
+    self:updateTooltip()
+end
+
+function game:updateTooltip()
+    if not self.tooltip then return end
+    
+    local canvasX, canvasY = self:getMouseCanvasPosition()
+    local hoverStack = nil
+    
+    -- Параметры сетки
+    local gridRows = self.table.tableConfig.gridRows
+    local gridCols = self.table.tableConfig.gridCols
+    local gridSlotSize = self.table.tableConfig.gridSlotSize
+    local gridSpacing = self.table.tableConfig.gridSpacing
+    local gridTotalWidth = gridCols * gridSlotSize + (gridCols - 1) * gridSpacing
+    local gridStartX = (self.canvasWidth - gridTotalWidth) / 2
+    local gridStartY = self.table.tableConfig.gridStartY
+
+    -- Проверяем наведение на каждый слот
+    for r = 1, gridRows do
+        for c = 1, gridCols do
+            local x = gridStartX + (c - 1) * (gridSlotSize + gridSpacing)
+            local y = gridStartY + (r - 1) * (gridSlotSize + gridSpacing)
+            
+            if self:pointInRect(canvasX, canvasY, x, y, gridSlotSize, gridSlotSize) then
+                hoverStack = self.battlefield[r][c]
+                break
+            end
+        end
+        if hoverStack then break end
+    end
+
+    if hoverStack then
+        -- Вычисляем комбинацию для стека
+        local stack = hoverStack
+        if stack.suit then stack = {stack} end -- Fallback if single card
+        
+        local result = Combinations.evaluate(stack)
+        if result then
+            local text = string.format("%s\nForce: %d\nCards: %d/5", result.name, result.score, #stack)
+            self.tooltip:set(text, canvasX, canvasY)
+        else
+            self.tooltip:hide()
+        end
+    else
+        self.tooltip:hide()
+    end
 end
 
 -- Обновление скейлинга при изменении размера окна
@@ -204,8 +261,84 @@ function game:moveSideStacks(side)
                             self.battlefield[r][c] = nil
                             print("Moved full stack from ("..r..", "..c..") to ("..targetRow..", "..c..")")
                         else
-                            -- Слот занят — движение заблокировано (т.к. объединяться некуда, уже 5 карт)
-                            print("Full stack at ("..r..", "..c..") blocked at ("..targetRow..", "..c..")")
+                            -- Слот занят. Проверяем, враг это или союзник.
+                            local targetFirstCard = targetSlot.suit and targetSlot or targetSlot[1]
+                            if targetFirstCard and targetFirstCard.owner ~= side then
+                                -- ВРАГ! Атакуем!
+                                local winner, survivors = Combat.resolveCombat(stack, targetSlot)
+                                
+                                if winner == "attacker" then
+                                    -- Победил атакующий (тот кто сейчас ходит)
+                                    if #survivors > 0 then
+                                        self.battlefield[targetRow][c] = survivors
+                                    else
+                                        self.battlefield[targetRow][c] = nil
+                                    end
+                                    self.battlefield[r][c] = nil
+                                    print("Attacker WON combat at ("..targetRow..", "..c..")")
+                                else
+                                    -- Победил обороняющийся
+                                    if #survivors > 0 then
+                                        self.battlefield[targetRow][c] = survivors
+                                    else
+                                        self.battlefield[targetRow][c] = nil
+                                    end
+                                    self.battlefield[r][c] = nil
+                                    print("Defender WON combat at ("..targetRow..", "..c..")")
+                                end
+                            elseif targetFirstCard and targetFirstCard.owner == side then
+                                -- СОЮЗНИК. Проверяем, неполный ли он?
+                                local targetStackSize = targetSlot.suit and 1 or #targetSlot
+                                if targetStackSize < 5 then
+                                    -- Попытка продвинуть союзный неполный стек (push)
+                                    local pushRow = targetRow + direction
+                                    local canPush = false
+                                    local pushCombatsEnemy = false
+                                    
+                                    if pushRow < 1 or pushRow > rows then
+                                        canPush = true -- Толчок за край поля
+                                    elseif self.battlefield[pushRow][c] == nil then
+                                        canPush = true -- Толчок в пустой слот
+                                    else
+                                        -- Проверяем, не враг ли там?
+                                        local pushTarget = self.battlefield[pushRow][c]
+                                        local pushTargetFirstCard = pushTarget.suit and pushTarget or pushTarget[1]
+                                        if pushTargetFirstCard and pushTargetFirstCard.owner ~= side then
+                                            canPush = true
+                                            pushCombatsEnemy = true
+                                        end
+                                    end
+
+                                    if canPush then
+                                        if pushRow < 1 or pushRow > rows then
+                                            print("Pushed allied non-full stack to frontline!")
+                                        elseif pushCombatsEnemy then
+                                            -- Атакуем врага вытолкнутым стеком!
+                                            print("Pushed ally attacks enemy at ("..pushRow..", "..c..")")
+                                            local winner, survivors = Combat.resolveCombat(targetSlot, self.battlefield[pushRow][c])
+                                            if winner == "attacker" then
+                                                self.battlefield[pushRow][c] = #survivors > 0 and survivors or nil
+                                            else
+                                                self.battlefield[pushRow][c] = #survivors > 0 and survivors or nil
+                                            end
+                                        else
+                                            -- Просто перемещаем в пустой слот
+                                            self.battlefield[pushRow][c] = targetSlot
+                                        end
+                                        
+                                        -- В любом случае (победа, поражение или пустой слот) 
+                                        -- исходный слот освобождается для толкающего стека
+                                        self.battlefield[targetRow][c] = stack
+                                        self.battlefield[r][c] = nil
+                                        print("Stack at ("..r..", "..c..") pushed ally forward and took its place")
+                                    else
+                                        print("Ally at ("..targetRow..", "..c..") is blocked, cannot push")
+                                    end
+                                else
+                                    -- Свой ПОЛНЫЙ отряд — заблокировано
+                                    print("Full stack at ("..r..", "..c..") blocked by allied full stack at ("..targetRow..", "..c..")")
+                                end
+                            end
                         end
                     else
                         -- Достигли края вражеской территории
@@ -280,9 +413,19 @@ function game:mousereleased(x, y, button)
 
         for _, slot in ipairs(frontRowSlots) do
             if self:pointInRect(canvasX, canvasY, slot.x, slot.y, slot.width, slot.height) then
-                -- Проверяем, не переполнен ли слот (макс. 5 карт)
+                -- Проверяем, не занят ли слот врагом
                 local playerRow = self.table.tableConfig.gridRows
                 local currentStack = self.battlefield[playerRow][slot.col]
+                
+                if currentStack then
+                    local firstCard = currentStack.suit and currentStack or currentStack[1]
+                    if firstCard and firstCard.owner ~= "player" then
+                        print("Slot column " .. slot.col .. " is occupied by ENEMY. Cannot place card.")
+                        break
+                    end
+                end
+
+                -- Проверяем, не переполнен ли слот (макс. 5 карт)
                 if currentStack and #currentStack >= 5 then
                     print("Slot column " .. slot.col .. " is full (5 cards max)")
                     break -- Выходим из цикла, droppedInSlot останется false, карта вернется в руку
@@ -393,6 +536,11 @@ function game:draw()
 
         -- Рисуем карту в позиции курсора
         self.draggedCard:draw(cardX, cardY, self.table.tableConfig, self.table.suitSprites)
+    end
+
+    -- Отрисовка тултипа (поверх всего в canvas)
+    if self.tooltip then
+        self.tooltip:draw()
     end
 
     -- Отрисовка инструкций
